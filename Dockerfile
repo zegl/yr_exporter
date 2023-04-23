@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM        golang:1.18-bullseye as builder
+FROM golang:1.20-bullseye as builder
 
 WORKDIR /app
 ADD go.mod /app/go.mod
@@ -16,3 +16,5 @@ RUN apt-get update && apt-get install ca-certificates -y
 COPY --from=builder /bin/yr_exporter /bin/yr_exporter
 EXPOSE      9367
 ENTRYPOINT  [ "/bin/yr_exporter" ]
+
+LABEL org.opencontainers.image.source https://github.com/zegl/yr_exporter
