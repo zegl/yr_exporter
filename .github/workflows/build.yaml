@@ -40,7 +40,7 @@ jobs:
         with:
           context: .
           push: true
-          tags: latest
+          tags: ghcr.io/zegl/yr_exporter:latest
           labels: ${{ steps.meta.outputs.labels }}
           file: Dockerfile
           platforms: linux/amd64,linux/arm64
