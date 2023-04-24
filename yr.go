@@ -28,8 +28,12 @@ type yrCollector struct {
 	nowcastWindSpeed         *prometheus.GaugeVec
 	nowcastWindSpeedOfGust   *prometheus.GaugeVec
 
-	forecastAirTemperature  *prometheus.GaugeVec
-	forecastInOneHourSymbol *prometheus.GaugeVec
+	forecastAirTemperature                        *prometheus.GaugeVec
+	forecastCloudAreaFraction                     *prometheus.GaugeVec
+	forecastUltravioletIndexClearSky              *prometheus.GaugeVec
+	forecastNextOneHoursSymbol                    *prometheus.GaugeVec
+	forecastNextOneHoursProbabilityOfPecipitation *prometheus.GaugeVec
+	forecastNext12HoursProbabilityOfPecipitation  *prometheus.GaugeVec
 
 	nowcastScrapesFailed prometheus.Counter
 }
@@ -85,9 +89,29 @@ func NewYrCollector(namespace string, logger *zap.Logger, locations []location) 
 			forecastGroupLabelNames,
 		),
 
-		forecastInOneHourSymbol: prometheus.NewGaugeVec(
-			prometheus.GaugeOpts{Namespace: namespace, Subsystem: "forecast", Name: "in_one_hour_symbol"},
+		forecastCloudAreaFraction: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{Namespace: namespace, Subsystem: "forecast", Name: "cloud_area_fraction"},
+			forecastGroupLabelNames,
+		),
+
+		forecastUltravioletIndexClearSky: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{Namespace: namespace, Subsystem: "forecast", Name: "ultraviolet_index_clear_sky"},
+			forecastGroupLabelNames,
+		),
+
+		forecastNextOneHoursSymbol: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{Namespace: namespace, Subsystem: "forecast", Name: "next_1_hours_symbol"},
 			[]string{"coordinates", "name", "in_hours", "code"},
+		),
+
+		forecastNextOneHoursProbabilityOfPecipitation: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{Namespace: namespace, Subsystem: "forecast", Name: "next_1_hours_probability_of_precipitation"},
+			forecastGroupLabelNames,
+		),
+
+		forecastNext12HoursProbabilityOfPecipitation: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{Namespace: namespace, Subsystem: "forecast", Name: "next_12_hours_probability_of_precipitation"},
+			forecastGroupLabelNames,
 		),
 
 		nowcastScrapesFailed: prometheus.NewCounter(
@@ -116,7 +140,11 @@ func (c *yrCollector) Collect(ch chan<- prometheus.Metric) {
 	c.nowcastWindSpeedOfGust.Reset()
 
 	c.forecastAirTemperature.Reset()
-	c.forecastInOneHourSymbol.Reset()
+	c.forecastCloudAreaFraction.Reset()
+	c.forecastUltravioletIndexClearSky.Reset()
+	c.forecastNextOneHoursSymbol.Reset()
+	c.forecastNextOneHoursProbabilityOfPecipitation.Reset()
+	c.forecastNext12HoursProbabilityOfPecipitation.Reset()
 
 	for _, loc := range c.locations {
 		labels := prometheus.Labels{
@@ -151,12 +179,16 @@ func (c *yrCollector) Collect(ch chan<- prometheus.Metric) {
 				forecastLabels["in_hours"] = fmt.Sprintf("%d", k)
 
 				c.forecastAirTemperature.With(forecastLabels).Set(d.AirTemperature)
+				c.forecastCloudAreaFraction.With(forecastLabels).Set(d.CloudAreaFraction)
+				c.forecastUltravioletIndexClearSky.With(forecastLabels).Set(d.UltravioletIndexClearSky)
 
 				{
-					gv, _ := c.forecastInOneHourSymbol.CurryWith(forecastLabels)
+					gv, _ := c.forecastNextOneHoursSymbol.CurryWith(forecastLabels)
 					gv.With(prometheus.Labels{"code": ts.Data.Next1Hours.Summary.SymbolCode}).Set(1)
 				}
 
+				c.forecastNextOneHoursProbabilityOfPecipitation.With(forecastLabels).Set(ts.Data.Next1Hours.Details.PrecipitationAmount)
+				c.forecastNext12HoursProbabilityOfPecipitation.With(forecastLabels).Set(ts.Data.Next12Hours.Details.ProbabilityOfPrecipitation)
 			}
 		}
 	}
@@ -169,7 +201,11 @@ func (c *yrCollector) Collect(ch chan<- prometheus.Metric) {
 	c.nowcastWindSpeedOfGust.Collect(ch)
 
 	c.forecastAirTemperature.Collect(ch)
-	c.forecastInOneHourSymbol.Collect(ch)
+	c.forecastCloudAreaFraction.Collect(ch)
+	c.forecastUltravioletIndexClearSky.Collect(ch)
+	c.forecastNextOneHoursSymbol.Collect(ch)
+	c.forecastNextOneHoursProbabilityOfPecipitation.Collect(ch)
+	c.forecastNext12HoursProbabilityOfPecipitation.Collect(ch)
 }
 
 func (c *yrCollector) getNowCast(loc location) (*NowCastResponse, error) {
