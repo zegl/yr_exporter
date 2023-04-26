@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
@@ -34,6 +35,13 @@ type yrCollector struct {
 	forecastNextOneHoursSymbol                    *prometheus.GaugeVec
 	forecastNextOneHoursProbabilityOfPecipitation *prometheus.GaugeVec
 	forecastNext12HoursProbabilityOfPecipitation  *prometheus.GaugeVec
+
+	sunriseSunriseSecondsAfterMidnight       *prometheus.GaugeVec
+	sunriseSunsetSecondsAfterMidnight        *prometheus.GaugeVec
+	sunriseSolarNoonSecondsAfterMidnight     *prometheus.GaugeVec
+	sunriseSolarNoonElevation                *prometheus.GaugeVec
+	sunriseSolarMidnightSecondsAfterMidnight *prometheus.GaugeVec
+	sunriseSolarMidnightElevation            *prometheus.GaugeVec
 
 	nowcastScrapesFailed prometheus.Counter
 }
@@ -114,6 +122,31 @@ func NewYrCollector(namespace string, logger *zap.Logger, locations []location) 
 			forecastGroupLabelNames,
 		),
 
+		sunriseSunriseSecondsAfterMidnight: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{Namespace: namespace, Subsystem: "sunrise", Name: "sunrise_seconds_after_midnight"},
+			nowcastGroupLabelNames,
+		),
+		sunriseSunsetSecondsAfterMidnight: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{Namespace: namespace, Subsystem: "sunrise", Name: "sunset_seconds_after_midnight"},
+			nowcastGroupLabelNames,
+		),
+		sunriseSolarNoonSecondsAfterMidnight: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{Namespace: namespace, Subsystem: "sunrise", Name: "sunset_solar_noon_seconds_after_midnight"},
+			nowcastGroupLabelNames,
+		),
+		sunriseSolarNoonElevation: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{Namespace: namespace, Subsystem: "sunrise", Name: "sunset_solar_noon_elevation"},
+			nowcastGroupLabelNames,
+		),
+		sunriseSolarMidnightSecondsAfterMidnight: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{Namespace: namespace, Subsystem: "sunrise", Name: "sunset_solar_midnight_seconds_after_midnight"},
+			nowcastGroupLabelNames,
+		),
+		sunriseSolarMidnightElevation: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{Namespace: namespace, Subsystem: "sunrise", Name: "sunset_solar_midnight_elevation"},
+			nowcastGroupLabelNames,
+		),
+
 		nowcastScrapesFailed: prometheus.NewCounter(
 			prometheus.CounterOpts{
 				Namespace: namespace,
@@ -145,6 +178,13 @@ func (c *yrCollector) Collect(ch chan<- prometheus.Metric) {
 	c.forecastNextOneHoursSymbol.Reset()
 	c.forecastNextOneHoursProbabilityOfPecipitation.Reset()
 	c.forecastNext12HoursProbabilityOfPecipitation.Reset()
+
+	c.sunriseSunriseSecondsAfterMidnight.Reset()
+	c.sunriseSunsetSecondsAfterMidnight.Reset()
+	c.sunriseSolarNoonSecondsAfterMidnight.Reset()
+	c.sunriseSolarNoonElevation.Reset()
+	c.sunriseSolarMidnightSecondsAfterMidnight.Reset()
+	c.sunriseSolarMidnightElevation.Reset()
 
 	for _, loc := range c.locations {
 		labels := prometheus.Labels{
@@ -191,6 +231,25 @@ func (c *yrCollector) Collect(ch chan<- prometheus.Metric) {
 				c.forecastNext12HoursProbabilityOfPecipitation.With(forecastLabels).Set(ts.Data.Next12Hours.Details.ProbabilityOfPrecipitation)
 			}
 		}
+
+		if sunrise, err := c.getSunrise(loc); err != nil {
+			c.logger.Error("Failed to update forecast", zap.Error(err))
+			c.nowcastScrapesFailed.Inc()
+		} else {
+			labels := prometheus.Labels{
+				"coordinates": fmt.Sprintf("%s,%s", loc.lat, loc.long),
+				"name":        loc.name,
+			}
+			if (len(sunrise.Location.Time)) > 1 {
+				s := sunrise.Location.Time[0]
+				c.sunriseSunriseSecondsAfterMidnight.With(labels).Set(float64(secondsAfterMidnight(s.Sunrise.Time)))
+				c.sunriseSunsetSecondsAfterMidnight.With(labels).Set(float64(secondsAfterMidnight(s.Sunset.Time)))
+				c.sunriseSolarNoonSecondsAfterMidnight.With(labels).Set(float64(secondsAfterMidnight(s.Solarnoon.Time)))
+				c.sunriseSolarNoonElevation.With(labels).Set(s.Solarnoon.Elevation)
+				c.sunriseSolarMidnightSecondsAfterMidnight.With(labels).Set(float64(secondsAfterMidnight((s.Solarmidnight.Time))))
+				c.sunriseSolarMidnightElevation.With(labels).Set(s.Solarmidnight.Elevation)
+			}
+		}
 	}
 
 	c.nowcastAirTemperature.Collect(ch)
@@ -206,6 +265,13 @@ func (c *yrCollector) Collect(ch chan<- prometheus.Metric) {
 	c.forecastNextOneHoursSymbol.Collect(ch)
 	c.forecastNextOneHoursProbabilityOfPecipitation.Collect(ch)
 	c.forecastNext12HoursProbabilityOfPecipitation.Collect(ch)
+
+	c.sunriseSunriseSecondsAfterMidnight.Collect(ch)
+	c.sunriseSunsetSecondsAfterMidnight.Collect(ch)
+	c.sunriseSolarNoonSecondsAfterMidnight.Collect(ch)
+	c.sunriseSolarNoonElevation.Collect(ch)
+	c.sunriseSolarMidnightSecondsAfterMidnight.Collect(ch)
+	c.sunriseSolarMidnightElevation.Collect(ch)
 }
 
 func (c *yrCollector) getNowCast(loc location) (*NowCastResponse, error) {
@@ -266,4 +332,46 @@ func (c *yrCollector) getForecast(loc location) (*ForecastResponse, error) {
 	}
 
 	return &res, nil
+}
+
+func (c *yrCollector) getSunrise(loc location) (*SunriseResponse, error) {
+	date := time.Now().Format("2006-01-02")
+	url := fmt.Sprintf("https://api.met.no/weatherapi/sunrise/2.0/.json?lat=%s&lon=%s&date=%s&offset=00:00", loc.lat, loc.long, date)
+	log.Printf("Fetching %s", url)
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build request: %w", err)
+	}
+
+	req.Header.Set("User-Agent", "https://github.com/zegl/yr_exporter")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get nowcast: %w", err)
+	}
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read nowcast: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var res SunriseResponse
+	if err := json.Unmarshal(body, &res); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal nowcast: %w", err)
+	}
+
+	return &res, nil
+}
+
+func secondsAfterMidnight(ts string) int {
+	const layout = "2006-01-02T15:04:05-07:00"
+	t, err := time.Parse(layout, ts)
+	if err != nil {
+		log.Println(ts, err)
+		return 0
+	}
+	return t.Second() + t.Minute()*60 + t.Hour()*60*60
+
 }
